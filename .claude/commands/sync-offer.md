@@ -55,8 +55,29 @@ Download the thumbnail image from `thumbnail_url` to `offers/{source_network}/{o
 
 Source network name is derived from the API key name (e.g., TRIMRX_API_KEY → "trimrx", DIRECTMEDS_API_KEY → "directmeds")
 
-### 5.3 Fetch Actual Destination URLs
-For each URL in the offer, the preview_url contains the destination. Save mapping to `offers/{source_network}/{offerId}/url_mapping.json`
+### 5.3 Fetch Actual Destination URLs (CRITICAL)
+
+The `preview_url` in `relationship.urls.entries[]` is often EMPTY. You MUST fetch the tracking URL for each landing page URL:
+
+```bash
+# For each URL in relationship.urls.entries[]
+GET https://api.eflow.team/v1/affiliates/offers/{sourceOfferId}/url/{sourceUrlId}
+Header: X-Eflow-API-Key: {source_api_key}
+# Returns: {"url": "https://www.domain.com/path?_ef_transaction_id=&uid=123&oid=456&affid=789"}
+```
+
+Extract the base destination (everything before `?`) from the tracking URL.
+
+Save mapping to `offers/{source_network}/{offerId}/url_mapping.json`:
+```json
+{
+  "123": {
+    "name": "1a - Infeed VSL",
+    "base_destination": "https://www.example.com/landing",
+    "iscale_url_id": 100
+  }
+}
+```
 
 ### 5.4 Download Creatives
 Download all creative images to `offers/{source_network}/{offerId}/creatives/`
@@ -71,7 +92,21 @@ After creating/updating in iScale, save the iScale offer ID to `offers/{source_n
 **If creating new:**
 1. Upload thumbnail via `/networks/uploads/temp` (base64 encode first)
 2. Create offer with `thumbnail_file: {temp_url, original_file_name}` via `POST /networks/offers`
-3. Create all offer URLs with correct destinations via `POST /networks/offerurls`
+3. Create all offer URLs with correct destinations via `POST /networks/offerurls`:
+   ```bash
+   POST https://api.eflow.team/v1/networks/offerurls
+   {
+     "network_offer_id": {iscaleOfferId},
+     "name": "{url_name}",
+     "destination_url": "{base_destination}?uid={source_url_id}&oid={source_offer_id}&affid={source_affiliate_id}&sub5={transaction_id}",
+     "url_status": "active"
+   }
+   ```
+   - `base_destination`: Extracted from source tracking URL (Step 5.3)
+   - `uid`: Source URL ID (for attribution)
+   - `oid`: Source offer ID
+   - `affid`: Your affiliate ID in source network (from your source network account)
+   - `sub5={transaction_id}`: iScale click ID token (replaced at redirect)
 4. Upload and create each creative via `POST /networks/creatives`
 
 **If updating existing:**
@@ -135,7 +170,76 @@ POST https://api.eflow.team/v1/networks/custom/payoutrevenue
 
 Map source URL IDs to new iScale URL IDs by matching names.
 
-### 5.9 Verify Sync
+### 5.9 Setup Postbacks (REQUIRED)
+
+Create affiliate pixels in the source network to fire conversions to iScale.
+
+**Step 1: Get iScale tracking domain**
+```bash
+# Temporarily set offer to public
+PATCH https://api.eflow.team/v1/networks/patch/offers/apply
+Header: X-Eflow-API-Key: {ISCALE_API_KEY}
+{"network_offer_ids": [iscaleOfferId], "fields": [{"field_type": "visibility", "field_value": "public"}]}
+
+# Generate tracking link to get domain
+POST https://api.eflow.team/v1/networks/tracking/offers/clicks
+Header: X-Eflow-API-Key: {ISCALE_API_KEY}
+{"network_offer_id": iscaleOfferId, "network_affiliate_id": 1}
+# Response: {"url": "https://www.{tracking_domain}.com/..."}
+
+# Reset visibility
+PATCH https://api.eflow.team/v1/networks/patch/offers/apply
+{"network_offer_ids": [iscaleOfferId], "fields": [{"field_type": "visibility", "field_value": "require_approval"}]}
+```
+
+**Step 2: Set advertiser verification token** (if not already set)
+```bash
+PATCH https://api.eflow.team/v1/networks/patch/advertiser/apply
+Header: X-Eflow-API-Key: {ISCALE_API_KEY}
+{
+  "network_advertiser_ids": [advertiserId],
+  "fields": [{"field_type": "verification_token", "field_value": "{source_network}_iscale_2025"}]
+}
+```
+
+**Step 3: Create pixels in source network**
+
+Postback URL format:
+```
+https://{tracking_domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+```
+
+For each payout event in the source offer:
+```bash
+# Base conversion (default event - no adv_event_id needed)
+POST https://api.eflow.team/v1/affiliates/pixels
+Header: X-Eflow-API-Key: {source_api_key}
+{
+  "network_offer_id": sourceOfferId,
+  "delivery_method": "postback",
+  "pixel_level": "specific",
+  "pixel_status": "active",
+  "pixel_type": "conversion",
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}"
+}
+
+# Post-conversion events (include adv_event_id for iScale)
+POST https://api.eflow.team/v1/affiliates/pixels
+Header: X-Eflow-API-Key: {source_api_key}
+{
+  "network_offer_id": sourceOfferId,
+  "network_offer_payout_revenue_id": sourceEventId,
+  "delivery_method": "postback",
+  "pixel_level": "specific",
+  "pixel_status": "active",
+  "pixel_type": "post_conversion",
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={iscaleEventId}"
+}
+```
+
+**Event ID Mapping**: Match source event `entry_name` to iScale event IDs from `relationship.payout_revenue.entries[]`.
+
+### 5.10 Verify Sync
 Query iScale API to verify:
 - [ ] Offer exists with correct name/description
 - [ ] Thumbnail uploaded (check `thumbnail_url` not empty)
@@ -143,6 +247,7 @@ Query iScale API to verify:
 - [ ] All creatives created
 - [ ] Geo targeting applied (may show null in API but still work)
 - [ ] Custom payout rules created (query `/networks/custom/payoutrevenue?network_offer_id=X`)
+- [ ] Postback pixels created in source network (query `/affiliates/pixels`)
 
 ## Sync Checklist
 
@@ -154,11 +259,13 @@ Always sync these components:
 5. **Creatives**: All creative assets (images, links)
 6. **Geo Targeting**: Countries (include) and regions (exclude)
 7. **Custom Payout Rules**: URL-specific payout overrides
+8. **Postback Pixels**: Create in source network to fire conversions to iScale
 
 ## Important Notes
 
 - Always use `ISCALE_API_KEY` for pushing to iScale
-- Affiliate API doesn't expose destination URLs directly - use preview_url from offer data
+- **Destination URLs**: `preview_url` in URL entries is often EMPTY - must fetch via `GET /affiliates/offers/{id}/url/{urlId}`
+- **URL format**: Always include tracking params: `?uid={source_url_id}&oid={source_offer_id}&affid={affid}&sub5={transaction_id}`
 - For PUT requests to offers, include `payout_revenue` array with `is_default: true` entry
 - Geo targeting via PATCH returns `true` but may not show in GET response - that's OK
 - Custom payouts REQUIRE: `is_custom_payout_enabled: true`, `name`, `custom_setting_status: "active"`
