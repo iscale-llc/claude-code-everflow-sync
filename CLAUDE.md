@@ -26,7 +26,7 @@ Sync offers from affiliate networks into iScale Everflow network.
 ```bash
 # API Keys
 ISCALE_API_KEY=xxx                    # Destination network API (always push target)
-{NETWORK}_API_KEY=xxx                 # Source network APIs (e.g., BCOMMERCE_API_KEY)
+{NETWORK}_API_KEY=xxx                 # Source network APIs (e.g., ACME_API_KEY)
 
 # iScale Configuration
 ISCALE_NETWORK_ID=xxx                 # Your iScale network ID (nid parameter)
@@ -157,14 +157,34 @@ https://www.example.com/landing?uid=123&oid=456&affid=789&sub5={transaction_id}
 
 3. **PUT requires full payload**: Include `payout_revenue` array with one `is_default: true` entry
 
-4. **Thumbnail upload**:
+4. **Thumbnail handling** (with fallbacks if missing):
+
+**If source has thumbnail:** Download and resize
+**If no thumbnail:** Try in order:
+1. Scrape `og:image` from landing page
+2. Get favicon from domain (try `/favicon.ico`, `/apple-touch-icon.png`, or Google favicon API)
+3. Generate placeholder with offer initials
+
+```bash
+# Resize/crop to 400x400 (standard thumbnail size)
+magick "{input}" -resize 400x400^ -gravity center -extent 400x400 thumbnail.png
+
+# Generate placeholder (if no image found)
+magick -size 400x400 xc:"#4A90D9" -gravity center -pointsize 120 -fill white \
+  -annotate 0 "AB" thumbnail.png
+
+# Get favicon via Google API
+curl -o favicon.png "https://www.google.com/s2/favicons?domain={domain}&sz=128"
+```
+
+**Upload to Everflow:**
 ```bash
 # 1. Base64 encode image
-base64 -i logo.png > logo_b64.txt
+base64 -i thumbnail.png > thumb_b64.txt
 
 # 2. Upload to temp
 POST /v1/networks/uploads/temp
-{"content": "<base64>", "file_type": "image/png", "file_name": "logo.png"}
+{"content": "<base64>", "file_type": "image/png", "file_name": "thumbnail.png"}
 # Returns: {"urls": [{"url": "https://...temp/uuid"}]}
 
 # 3. Use in offer create/update
