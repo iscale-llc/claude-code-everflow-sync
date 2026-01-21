@@ -26,10 +26,20 @@ GET https://api.eflow.team/v1/affiliates/offers/{sourceOfferId}
 Header: X-Eflow-API-Key: {source_api_key}
 ```
 
-Extract URLs from `relationship.urls.entries[]` - each has:
+Extract URL IDs and names from `relationship.urls.entries[]`:
 - `network_offer_url_id` - source URL ID
 - `name` - URL name
-- `preview_url` - destination URL
+- `preview_url` - often EMPTY, do not rely on this
+
+**CRITICAL**: Fetch actual destination for each URL:
+```bash
+# For each URL entry
+GET https://api.eflow.team/v1/affiliates/offers/{sourceOfferId}/url/{sourceUrlId}
+Header: X-Eflow-API-Key: {source_api_key}
+# Returns: {"url": "https://www.domain.com/path?_ef_transaction_id=&uid=123&oid=456&affid=789"}
+```
+
+Extract the base destination (everything before `?`) from the tracking URL.
 
 ## Step 4: Get Existing iScale URLs
 
@@ -51,7 +61,7 @@ POST https://api.eflow.team/v1/networks/offerurls
 {
   "network_offer_id": {iscaleOfferId},
   "name": "{url_name}",
-  "destination_url": "{preview_url}&affid={affiliate_id}&sub5={transaction_id}",
+  "destination_url": "{base_destination}?uid={source_url_id}&oid={source_offer_id}&affid={source_affiliate_id}&sub5={transaction_id}",
   "url_status": "active"
 }
 ```
@@ -63,7 +73,7 @@ PUT https://api.eflow.team/v1/networks/offerurls/{urlId}
   "network_offer_url_id": {urlId},
   "network_offer_id": {iscaleOfferId},
   "name": "{url_name}",
-  "destination_url": "{new_destination}",
+  "destination_url": "{base_destination}?uid={source_url_id}&oid={source_offer_id}&affid={source_affiliate_id}&sub5={transaction_id}",
   "url_status": "active"
 }
 ```
@@ -86,10 +96,11 @@ PUT https://api.eflow.team/v1/networks/offerurls/{urlId}
 Save updated mapping to `offers/{source_network}/{offerId}/url_mapping.json`:
 ```json
 {
-  "source_url_id": {
-    "name": "URL Name",
-    "source_destination": "https://...",
-    "iscale_url_id": 123
+  "123": {
+    "name": "1a - Infeed VSL",
+    "base_destination": "https://www.example.com/landing",
+    "full_destination": "https://www.example.com/landing?uid=123&oid=456&affid=789&sub5={transaction_id}",
+    "iscale_url_id": 100
   }
 }
 ```
@@ -106,16 +117,28 @@ Query iScale to verify URL count matches.
 
 ## URL Destination Format
 
-When creating URLs in iScale, append tracking parameters to source destination:
+When creating/updating URLs in iScale, use this format:
 ```
-{source_preview_url}&affid={affiliate_id}&sub5={transaction_id}
+{base_destination}?uid={source_url_id}&oid={source_offer_id}&affid={source_affiliate_id}&sub5={transaction_id}
 ```
 
-If source URL already has query params, use `&`. If not, use `?`.
+Parameters:
+- `base_destination`: Extracted from source tracking URL (before `?`)
+- `uid`: Source network URL ID (for attribution back to source)
+- `oid`: Source network offer ID
+- `affid`: Your affiliate ID in source network (from your source network account)
+- `sub5={transaction_id}`: iScale click ID token (replaced at redirect time)
+
+Example:
+```
+https://www.example.com/landing?uid=123&oid=456&affid=789&sub5={transaction_id}
+```
 
 ## Notes
 
 - URL names are used as the matching key between source and iScale
+- **Destination URLs**: `preview_url` in URL entries is often EMPTY - must fetch via `GET /affiliates/offers/{id}/url/{urlId}`
+- **Always include tracking params**: `?uid={source_url_id}&oid={source_offer_id}&affid={affid}&sub5={transaction_id}`
 - Can't DELETE URLs in Everflow - use `url_status: "deleted"` instead
 - Always preserve existing URL IDs when updating (don't recreate)
 - Custom payout rules reference URL IDs - updating URLs preserves these associations

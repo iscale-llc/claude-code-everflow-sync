@@ -2,27 +2,45 @@
 
 Sync offers from affiliate networks into iScale Everflow network.
 
+> **ON LOAD**: Read `.env.local` to get actual configuration values (API keys, network IDs, tracking domain, affiliate IDs, verification tokens). Use these real values when executing sync commands instead of the placeholders in this documentation.
+
 ## Available Commands
 
 | Command | Description |
 |---------|-------------|
-| `/sync-offer` | Full offer sync (all data, creatives, URLs, geo, payouts) |
+| `/setup` | Initial configuration wizard (API keys, network IDs, tokens) |
+| `/sync-offer` | Full offer sync (all data, creatives, URLs, geo, payouts, postbacks) |
 | `/sync-links` | Sync only landing page URLs for existing offers |
 | `/sync-rules` | Sync only custom payout rules for existing offers |
+| `/sync-postbacks` | Setup postback pixels in source network to fire to iScale |
 
 ### When to use each:
+- **First time?** → `/setup`
 - **New offer?** → `/sync-offer`
 - **URLs changed?** → `/sync-links`
 - **Payouts changed?** → `/sync-rules`
+- **Postbacks missing?** → `/sync-postbacks`
 
 ## Environment Variables (.env.local)
 
 ```bash
-ISCALE_API_KEY=xxx          # iScale network API (always push target)
-TRIMRX_API_KEY=xxx          # TrimRX affiliate API
-DIRECTMEDS_API_KEY=xxx      # DirectMeds affiliate API
-# Add more source network keys as: {NETWORK}_API_KEY=xxx
+# API Keys
+ISCALE_API_KEY=xxx                    # Destination network API (always push target)
+{NETWORK}_API_KEY=xxx                 # Source network APIs (e.g., BCOMMERCE_API_KEY)
+
+# iScale Configuration
+ISCALE_NETWORK_ID=xxx                 # Your iScale network ID (nid parameter)
+ISCALE_TRACKING_DOMAIN=xxx            # Your tracking domain (e.g., www.example.com)
+
+# Per-Network Configuration (for each source network)
+{NETWORK}_AFFILIATE_ID=xxx            # Your affiliate ID in source network
+{NETWORK}_ADVERTISER_ID=xxx           # Advertiser ID for this network in iScale
+{NETWORK}_VERIFICATION_TOKEN=xxx      # Postback verification token
 ```
+
+When syncing, use these values:
+- **Postback URL**: `https://{ISCALE_TRACKING_DOMAIN}/?nid={ISCALE_NETWORK_ID}&transaction_id={sub5}&verification_token={NETWORK_VERIFICATION_TOKEN}`
+- **URL Destination**: `{base_url}?uid={source_url_id}&oid={source_offer_id}&affid={NETWORK_AFFILIATE_ID}&sub5={transaction_id}`
 
 ## Directory Structure
 
@@ -60,6 +78,7 @@ Every sync MUST include:
 5. **Creatives**: All creative assets
 6. **Geo Targeting**: Countries + regions via PATCH or PUT /targeting
 7. **Custom Payout Rules**: URL-specific payout overrides
+8. **Postback Setup**: Create affiliate pixels in source network to fire to iScale
 
 ## API Cheatsheet
 
@@ -73,6 +92,11 @@ GET /v1/affiliates/offers/{id}
 
 # Get tracking URL (destination is in preview_url of offer data)
 GET /v1/affiliates/offers/{id}/url/{urlId}
+
+# Postback pixels (for setting up conversion firing)
+GET /v1/affiliates/pixels                    # List all pixels
+POST /v1/affiliates/pixels                   # Create new pixel
+PUT /v1/affiliates/pixels/{pixelId}          # Update pixel
 ```
 
 ### Network (iScale) Endpoints
@@ -97,15 +121,43 @@ GET/POST/PUT /v1/networks/custom/payoutrevenue
 
 # File Upload
 POST /v1/networks/uploads/temp  # Returns temp_url for use in creates
+
+# Tracking Links (to discover tracking domain)
+POST /v1/networks/tracking/offers/clicks  # Returns tracking URL with domain
+
+# Advertisers (for verification tokens)
+GET /v1/networks/advertisers/{id}
+PATCH /v1/networks/patch/advertiser/apply  # Set verification_token
 ```
 
 ## Key Gotchas
 
-1. **Destination URLs**: Use `preview_url` from offer's `relationship.urls.entries[]`
+1. **Destination URLs**: The `preview_url` in `relationship.urls.entries[]` is often EMPTY. You MUST fetch the actual tracking URL for each URL:
+```bash
+# Get tracking URL for a specific landing page URL
+GET /v1/affiliates/offers/{offerId}/url/{urlId}
+# Returns: {"url": "https://www.domain.com/path?_ef_transaction_id=&uid=123&oid=456&affid=789"}
 
-2. **PUT requires full payload**: Include `payout_revenue` array with one `is_default: true` entry
+# Extract base destination (before ?) and use it with iScale tracking params
+```
 
-3. **Thumbnail upload**:
+2. **URL Destination Format** (CRITICAL): When creating URLs in iScale, use this format:
+```
+{base_destination}?uid={source_url_id}&oid={source_offer_id}&affid={source_affiliate_id}&sub5={transaction_id}
+```
+- `uid`: Source network URL ID (for attribution back to source)
+- `oid`: Source network offer ID
+- `affid`: Source network affiliate ID (your affiliate ID in source network)
+- `sub5`: iScale transaction ID token (replaced at redirect time)
+
+Example:
+```
+https://www.example.com/landing?uid=123&oid=456&affid=789&sub5={transaction_id}
+```
+
+3. **PUT requires full payload**: Include `payout_revenue` array with one `is_default: true` entry
+
+4. **Thumbnail upload**:
 ```bash
 # 1. Base64 encode image
 base64 -i logo.png > logo_b64.txt
@@ -119,7 +171,7 @@ POST /v1/networks/uploads/temp
 "thumbnail_file": {"temp_url": "https://...temp/uuid", "original_file_name": "logo.png"}
 ```
 
-4. **Geo targeting via PATCH**:
+5. **Geo targeting via PATCH**:
 ```json
 {
   "network_offer_ids": [4],
@@ -139,7 +191,7 @@ POST /v1/networks/uploads/temp
 ```
 Note: Returns `true` but GET may still show `null` - targeting is applied anyway.
 
-5. **Geo targeting via PUT** (alternative):
+6. **Geo targeting via PUT** (alternative):
 ```bash
 PUT /v1/networks/offers/{id}/targeting
 {
@@ -148,7 +200,7 @@ PUT /v1/networks/offers/{id}/targeting
 }
 ```
 
-6. **Custom payout rules** (REQUIRED fields):
+7. **Custom payout rules** (REQUIRED fields):
 ```json
 {
   "network_offer_id": 4,
@@ -167,6 +219,101 @@ PUT /v1/networks/offers/{id}/targeting
   "is_apply_specific_offer_urls": true,
   "network_offer_url_ids": [104, 105]
 }
+```
+
+8. **Postback Setup** (for firing conversions to iScale):
+
+The Everflow API does NOT directly expose postback URLs. To set up postbacks:
+
+**Step 1: Get iScale tracking domain** (generate a tracking link):
+```bash
+# Temporarily set offer visibility to public
+PATCH /v1/networks/patch/offers/apply
+{"network_offer_ids": [offerId], "fields": [{"field_type": "visibility", "field_value": "public"}]}
+
+# Generate tracking link to discover domain
+POST /v1/networks/tracking/offers/clicks
+{"network_offer_id": offerId, "network_affiliate_id": 1}
+# Returns: {"url": "https://www.{tracking_domain}.com/..."}
+
+# Reset visibility
+PATCH /v1/networks/patch/offers/apply
+{"network_offer_ids": [offerId], "fields": [{"field_type": "visibility", "field_value": "require_approval"}]}
+```
+
+**Step 2: Set advertiser verification token**:
+```bash
+PATCH /v1/networks/patch/advertiser/apply
+{
+  "network_advertiser_ids": [advertiserId],
+  "fields": [{"field_type": "verification_token", "field_value": "{network}_iscale_2025"}]
+}
+```
+
+**Step 3: Build postback URL format**:
+```
+https://{tracking_domain}/?nid={network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+```
+- `nid`: iScale network ID ({your_network_id})
+- `transaction_id`: Use `{sub5}` macro (iScale click ID passed through)
+- `verification_token`: The token set in Step 2
+- `adv_event_id`: iScale payout event ID (omit for default/Base event)
+
+**Step 4: Create pixels in source network**:
+```bash
+# Base conversion pixel
+POST /v1/affiliates/pixels (using SOURCE network API key)
+{
+  "network_offer_id": sourceOfferId,
+  "delivery_method": "postback",
+  "pixel_level": "specific",
+  "pixel_status": "active",
+  "pixel_type": "conversion",
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}"
+}
+
+# Post-conversion events (for each non-default event)
+POST /v1/affiliates/pixels
+{
+  "network_offer_id": sourceOfferId,
+  "network_offer_payout_revenue_id": sourceEventId,
+  "delivery_method": "postback",
+  "pixel_level": "specific",
+  "pixel_status": "active",
+  "pixel_type": "post_conversion",
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={iscaleEventId}"
+}
+```
+
+**Event ID Mapping**: Map source payout event names to iScale event IDs by matching `entry_name`.
+
+## iScale Configuration
+
+> **Values loaded from `.env.local`**: `ISCALE_NETWORK_ID`, `ISCALE_TRACKING_DOMAIN`
+
+| Setting | Env Variable |
+|---------|-------------|
+| Network ID (nid) | `ISCALE_NETWORK_ID` |
+| Tracking Domain | `ISCALE_TRACKING_DOMAIN` |
+
+**Postback URL Format:**
+```
+https://{ISCALE_TRACKING_DOMAIN}/?nid={ISCALE_NETWORK_ID}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+```
+
+## Source Network Configuration
+
+> **Values loaded from `.env.local`**: `{NETWORK}_AFFILIATE_ID`, `{NETWORK}_ADVERTISER_ID`, `{NETWORK}_VERIFICATION_TOKEN`
+
+Each source network has configuration in `.env.local`:
+- `{NETWORK}_AFFILIATE_ID` - Your affiliate ID in that network (used in URL params)
+- `{NETWORK}_ADVERTISER_ID` - The advertiser ID in iScale for this network's offers
+- `{NETWORK}_VERIFICATION_TOKEN` - Token for authenticating postbacks
+
+### URL Destination Format
+
+```
+{base_url}?uid={source_url_id}&oid={source_offer_id}&affid={NETWORK_AFFILIATE_ID}&sub5={transaction_id}
 ```
 
 ## Common Region/Country IDs
@@ -194,6 +341,7 @@ PUT /v1/networks/offers/{id}/targeting
 | relationship.ruleset.countries | PATCH ruleset_countries or PUT /targeting |
 | relationship.ruleset.regions | PATCH ruleset_regions or PUT /targeting |
 | relationship.custom_payout_settings | POST /networks/custom/payoutrevenue |
+| relationship.payouts.entries[] | POST /affiliates/pixels (postbacks to iScale) |
 
 ## Verification Queries
 
@@ -210,4 +358,7 @@ GET /v1/networks/creatives  # filter by network_offer_id
 
 # Check custom payouts
 GET /v1/networks/custom/payoutrevenue?network_offer_id={id}
+
+# Check postback pixels (in SOURCE network)
+GET /v1/affiliates/pixels  # filter by network_offer_id, check postback_url contains tracking domain
 ```
