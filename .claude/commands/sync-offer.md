@@ -50,10 +50,42 @@ For each offer being synced:
 GET https://api.eflow.team/v1/affiliates/offers/{offerId}
 ```
 
-### 5.2 Download Thumbnail (REQUIRED)
-Download the thumbnail image from `thumbnail_url` to `offers/{source_network}/{offerId}/creatives/`
+### 5.2 Get Thumbnail (REQUIRED)
 
 Source network name is derived from the API key name (e.g., TRIMRX_API_KEY → "trimrx", DIRECTMEDS_API_KEY → "directmeds")
+
+**If `thumbnail_url` exists:** Download it to `offers/{source_network}/{offerId}/creatives/`
+
+**If `thumbnail_url` is empty:** Try these fallbacks in order:
+
+1. **Scrape og:image from landing page:**
+   ```bash
+   curl -sL "{preview_url}" | grep -oP 'property="og:image"[^>]*content="\K[^"]+' | head -1
+   ```
+
+2. **Get favicon from domain:**
+   ```bash
+   # Try common favicon locations
+   curl -sI "https://{domain}/favicon.ico"
+   curl -sI "https://{domain}/apple-touch-icon.png"
+   # Or use Google's favicon service
+   curl -o favicon.png "https://www.google.com/s2/favicons?domain={domain}&sz=128"
+   ```
+
+3. **Generate placeholder image:**
+   ```bash
+   # Create a simple placeholder with offer initials using ImageMagick
+   magick -size 400x400 xc:"#4A90D9" \
+     -gravity center -pointsize 120 -fill white \
+     -annotate 0 "{INITIALS}" \
+     "offers/{source_network}/{offerId}/creatives/thumbnail.png"
+   ```
+
+**Resize to standard dimensions (400x400):**
+```bash
+magick "{input_image}" -resize 400x400^ -gravity center -extent 400x400 \
+  "offers/{source_network}/{offerId}/creatives/thumbnail.png"
+```
 
 ### 5.3 Fetch Actual Destination URLs (CRITICAL)
 
