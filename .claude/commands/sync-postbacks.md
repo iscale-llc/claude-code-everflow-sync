@@ -112,13 +112,13 @@ If pixels exist for iScale, ask user: **Update existing or skip?**
 
 ### Postback URL Format
 ```
-https://{tracking_domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+https://{tracking_domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&event_id={event_id}
 ```
 
 - `nid`: iScale network ID (always `{your_network_id}`)
 - `transaction_id`: Use `{sub5}` macro (iScale click ID passed through tracking)
 - `verification_token`: From Step 3.2
-- `adv_event_id`: iScale payout event ID (omit for default/Base event)
+- `event_id`: iScale payout event ID (omit for default/Base event)
 
 ### 6.1 Create Base Conversion Pixel
 For the default event (is_default: true):
@@ -147,7 +147,7 @@ Header: X-Eflow-API-Key: {source_api_key}
   "pixel_level": "specific",
   "pixel_status": "active",
   "pixel_type": "post_conversion",
-  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={iscaleEventId}"
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&event_id={iscaleEventId}"
 }
 ```
 

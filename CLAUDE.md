@@ -31,6 +31,7 @@ ISCALE_API_KEY=xxx                    # Destination network API (always push tar
 # iScale Configuration
 ISCALE_NETWORK_ID=xxx                 # Your iScale network ID (nid parameter)
 ISCALE_TRACKING_DOMAIN=xxx            # Your tracking domain (e.g., www.example.com)
+ISCALE_PAYOUT_MARGIN=0.20             # Margin to keep (0.20 = 20%, affiliates get 80%)
 
 # Per-Network Configuration (for each source network)
 {NETWORK}_AFFILIATE_ID=xxx            # Your affiliate ID in source network
@@ -73,11 +74,11 @@ offers/
 Every sync MUST include:
 1. **Basic Info**: name, description, preview_url, destination_url, visibility
 2. **Thumbnail**: Download, upload to temp, attach via `thumbnail_file`
-3. **Payout Events**: All conversion events with amounts
+3. **Payout Events**: All conversion events with amounts **applying payout margin** (revenue = source payout, payout = source × (1 - ISCALE_PAYOUT_MARGIN))
 4. **Landing Page URLs**: All URLs with correct destinations
 5. **Creatives**: All creative assets
 6. **Geo Targeting**: Countries + regions via PATCH or PUT /targeting
-7. **Custom Payout Rules**: URL-specific payout overrides
+7. **Custom Payout Rules**: URL-specific payout overrides (also apply margin)
 8. **Postback Setup**: Create affiliate pixels in source network to fire to iScale
 
 ## API Cheatsheet
@@ -241,7 +242,9 @@ PUT /v1/networks/offers/{id}/targeting
 }
 ```
 
-8. **Postback Setup** (for firing conversions to iScale):
+8. **Postback URL param is `event_id` NOT `adv_event_id`**: Everflow advertiser postbacks use `event_id` for the event parameter. Never use `adv_event_id` — it will silently fail.
+
+9. **Postback Setup** (for firing conversions to iScale):
 
 The Everflow API does NOT directly expose postback URLs. To set up postbacks:
 
@@ -272,12 +275,14 @@ PATCH /v1/networks/patch/advertiser/apply
 
 **Step 3: Build postback URL format**:
 ```
-https://{tracking_domain}/?nid={network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+https://{tracking_domain}/?nid={network_id}&transaction_id={sub5}&verification_token={token}&event_id={event_id}
 ```
 - `nid`: iScale network ID ({your_network_id})
 - `transaction_id`: Use `{sub5}` macro (iScale click ID passed through)
 - `verification_token`: The token set in Step 2
-- `adv_event_id`: iScale payout event ID (omit for default/Base event)
+- `event_id`: iScale payout event ID (omit for default/Base event)
+
+> **CRITICAL: The parameter is `event_id`, NOT `adv_event_id`.** This matches what Everflow generates in advertiser postback URLs. Using the wrong param name will silently break event tracking. Never use `adv_event_id`.
 
 **Step 4: Create pixels in source network**:
 ```bash
@@ -301,7 +306,7 @@ POST /v1/affiliates/pixels
   "pixel_level": "specific",
   "pixel_status": "active",
   "pixel_type": "post_conversion",
-  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={iscaleEventId}"
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&event_id={iscaleEventId}"
 }
 ```
 
@@ -309,16 +314,26 @@ POST /v1/affiliates/pixels
 
 ## iScale Configuration
 
-> **Values loaded from `.env.local`**: `ISCALE_NETWORK_ID`, `ISCALE_TRACKING_DOMAIN`
+> **Values loaded from `.env.local`**: `ISCALE_NETWORK_ID`, `ISCALE_TRACKING_DOMAIN`, `ISCALE_PAYOUT_MARGIN`
 
-| Setting | Env Variable |
-|---------|-------------|
-| Network ID (nid) | `ISCALE_NETWORK_ID` |
-| Tracking Domain | `ISCALE_TRACKING_DOMAIN` |
+| Setting | Env Variable | Default |
+|---------|-------------|---------|
+| Network ID (nid) | `ISCALE_NETWORK_ID` | - |
+| Tracking Domain | `ISCALE_TRACKING_DOMAIN` | - |
+| Payout Margin | `ISCALE_PAYOUT_MARGIN` | 0.20 |
+
+### Payout Margin (REQUIRED)
+
+When syncing offers, **always apply the payout margin** to affiliate payouts:
+- `revenue_amount` = Source payout (what we receive from source network)
+- `payout_amount` = Source payout × (1 - margin) (what we pay affiliates)
+
+**Example** with 20% margin (`ISCALE_PAYOUT_MARGIN=0.20`):
+- Source pays $350 → Revenue: $350, Payout: $280 (we keep $70)
 
 **Postback URL Format:**
 ```
-https://{ISCALE_TRACKING_DOMAIN}/?nid={ISCALE_NETWORK_ID}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+https://{ISCALE_TRACKING_DOMAIN}/?nid={ISCALE_NETWORK_ID}&transaction_id={sub5}&verification_token={token}&event_id={event_id}
 ```
 
 ## Source Network Configuration
@@ -355,7 +370,8 @@ Each source network has configuration in `.env.local`:
 | html_description | html_description |
 | preview_url | preview_url |
 | thumbnail_url | thumbnail_file (download, upload to temp first) |
-| relationship.payouts | payout_revenue[] |
+| relationship.payouts.payout_amount | revenue_amount (what we receive) |
+| relationship.payouts.payout_amount × (1 - margin) | payout_amount (what affiliates receive) |
 | relationship.creatives | POST /networks/creatives |
 | relationship.urls | POST /networks/offerurls |
 | relationship.ruleset.countries | PATCH ruleset_countries or PUT /targeting |

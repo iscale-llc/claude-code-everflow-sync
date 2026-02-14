@@ -238,12 +238,12 @@ Header: X-Eflow-API-Key: {ISCALE_API_KEY}
 
 Postback URL format:
 ```
-https://{tracking_domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={event_id}
+https://{tracking_domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&event_id={event_id}
 ```
 
 For each payout event in the source offer:
 ```bash
-# Base conversion (default event - no adv_event_id needed)
+# Base conversion (default event - no event_id needed)
 POST https://api.eflow.team/v1/affiliates/pixels
 Header: X-Eflow-API-Key: {source_api_key}
 {
@@ -255,7 +255,7 @@ Header: X-Eflow-API-Key: {source_api_key}
   "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}"
 }
 
-# Post-conversion events (include adv_event_id for iScale)
+# Post-conversion events (include event_id for iScale)
 POST https://api.eflow.team/v1/affiliates/pixels
 Header: X-Eflow-API-Key: {source_api_key}
 {
@@ -265,7 +265,7 @@ Header: X-Eflow-API-Key: {source_api_key}
   "pixel_level": "specific",
   "pixel_status": "active",
   "pixel_type": "post_conversion",
-  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&adv_event_id={iscaleEventId}"
+  "postback_url": "https://{domain}/?nid={your_network_id}&transaction_id={sub5}&verification_token={token}&event_id={iscaleEventId}"
 }
 ```
 
