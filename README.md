@@ -141,6 +141,12 @@ This ensures conversions can be attributed back to the source network.
 
 Built by Jason Akatiff - jasona@iscale.com or @jasonakatiff on Telegram
 
+## Built with AI
+
+This project is part of the [Built with AI](https://builtwithai.com/open-source) open source collection — free tools built by the AI builder community.
+
+**[Join the community →](https://builtwithai.com/apply)**
+
 ## License
 
 MIT
